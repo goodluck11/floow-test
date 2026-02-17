@@ -1,0 +1,454 @@
+Here are the exact changes needed — only the new tab code and its controller method:
+
+## Step 1: Add to FXML (paste inside `<TabPane>` after the Key-Value Processing Tab closing `</Tab>`)
+
+```xml
+<!-- Base64 Tab -->
+<Tab text="Base64">
+    <ScrollPane fitToWidth="true" fitToHeight="true">
+        <VBox spacing="15" styleClass="content-pane">
+
+            <!-- Mode Selection -->
+            <VBox spacing="5">
+                <Label text="Operation" styleClass="section-label"/>
+                <HBox spacing="15">
+                    <RadioButton fx:id="encodeRadioButton" text="Encode" selected="true"
+                                 onAction="#handleBase64ModeChange"/>
+                    <RadioButton fx:id="decodeRadioButton" text="Decode"
+                                 onAction="#handleBase64ModeChange"/>
+                </HBox>
+            </VBox>
+
+            <!-- Input -->
+            <VBox spacing="5" VBox.vgrow="ALWAYS">
+                <HBox alignment="CENTER_LEFT" spacing="10">
+                    <Label fx:id="base64InputLabel" text="Plain Text Input" styleClass="section-label"/>
+                    <Pane HBox.hgrow="ALWAYS"/>
+                    <Button text="Clear" onAction="#handleClearBase64" styleClass="default-button"/>
+                    <Button text="Paste from Clipboard" onAction="#handlePasteBase64" styleClass="default-button"/>
+                </HBox>
+                <TextArea fx:id="base64InputArea"
+                          promptText="Enter text to encode..."
+                          prefHeight="180"
+                          styleClass="input-area"
+                          wrapText="true"/>
+            </VBox>
+
+            <!-- Action Button + progress -->
+            <HBox spacing="10" alignment="CENTER">
+                <Button fx:id="base64ActionButton" text="Encode →"
+                        onAction="#handleBase64Process"
+                        styleClass="primary-button" prefWidth="160"/>
+                <Button text="⇅ Swap Input/Output" onAction="#handleBase64Swap"
+                        styleClass="default-button"/>
+                <ProgressIndicator fx:id="base64ProgressIndicator" prefWidth="30" prefHeight="30"/>
+            </HBox>
+
+            <!-- Output -->
+            <VBox spacing="5" VBox.vgrow="ALWAYS">
+                <HBox alignment="CENTER_LEFT" spacing="10">
+                    <Label fx:id="base64OutputLabel" text="Base64 Output" styleClass="section-label"/>
+                    <Pane HBox.hgrow="ALWAYS"/>
+                    <Label fx:id="base64CharCount" text="0 chars" styleClass="char-count-label"/>
+                    <Button text="Copy Output" onAction="#handleCopyBase64Output" styleClass="default-button"/>
+                </HBox>
+                <TextArea fx:id="base64OutputArea"
+                          promptText="Output will appear here..."
+                          prefHeight="180"
+                          editable="false"
+                          styleClass="result-area"
+                          wrapText="true"/>
+            </VBox>
+
+            <!-- Divider -->
+            <Separator/>
+
+            <!-- Batch Table Section -->
+            <VBox spacing="5">
+                <Label text="Batch Process (Comma-separated or JSON key-value pairs)"
+                       styleClass="section-label"/>
+                <TextArea fx:id="base64BatchInputArea"
+                          promptText="Comma-separated:&#10;key1=value1, key2=value2&#10;&#10;JSON:&#10;{&quot;key1&quot;: &quot;value1&quot;, &quot;key2&quot;: &quot;value2&quot;}"
+                          prefHeight="120"
+                          styleClass="input-area"
+                          wrapText="true"/>
+            </VBox>
+
+            <!-- Batch Action Buttons -->
+            <HBox spacing="10" alignment="CENTER">
+                <Button text="Batch Encode" onAction="#handleBase64BatchEncode"
+                        styleClass="primary-button" prefWidth="150"/>
+                <Button text="Batch Decode" onAction="#handleBase64BatchDecode"
+                        styleClass="secondary-button" prefWidth="150"/>
+                <Button text="Clear Batch" onAction="#handleClearBase64Batch"
+                        styleClass="default-button" prefWidth="120"/>
+            </HBox>
+
+            <!-- Batch Results Table -->
+            <VBox spacing="5" VBox.vgrow="ALWAYS">
+                <Label text="Batch Results" styleClass="section-label"/>
+                <TableView fx:id="base64ResultTable" prefHeight="200" styleClass="result-table">
+                    <columns>
+                        <TableColumn fx:id="base64KeyColumn"    text="Key"/>
+                        <TableColumn fx:id="base64OriginalColumn" text="Original"/>
+                        <TableColumn fx:id="base64ResultColumn"  text="Result"/>
+                    </columns>
+                </TableView>
+
+                <HBox spacing="10" alignment="CENTER_RIGHT">
+                    <Button text="Copy Selected" onAction="#handleCopySelectedBase64Row"
+                            styleClass="default-button"/>
+                    <Button text="Copy All"      onAction="#handleCopyAllBase64Rows"
+                            styleClass="default-button"/>
+                    <Button text="Clear Results" onAction="#handleClearBase64Results"
+                            styleClass="default-button"/>
+                </HBox>
+            </VBox>
+
+        </VBox>
+    </ScrollPane>
+</Tab>
+```
+
+## Step 2: Add FXML fields to `MainController.java` (paste with the other `@FXML` declarations at the top)
+
+```java
+// ── Base64 Tab ──────────────────────────────────────────────
+@FXML private RadioButton  encodeRadioButton;
+@FXML private RadioButton  decodeRadioButton;
+@FXML private Label        base64InputLabel;
+@FXML private Label        base64OutputLabel;
+@FXML private Label        base64CharCount;
+@FXML private TextArea     base64InputArea;
+@FXML private TextArea     base64OutputArea;
+@FXML private Button       base64ActionButton;
+@FXML private ProgressIndicator base64ProgressIndicator;
+
+// Batch
+@FXML private TextArea     base64BatchInputArea;
+@FXML private TableView<KeyValueResult>    base64ResultTable;
+@FXML private TableColumn<KeyValueResult, String> base64KeyColumn;
+@FXML private TableColumn<KeyValueResult, String> base64OriginalColumn;
+@FXML private TableColumn<KeyValueResult, String> base64ResultColumn;
+
+private final ObservableList<KeyValueResult> base64Results = FXCollections.observableArrayList();
+private final ToggleGroup base64ToggleGroup = new ToggleGroup();
+```
+
+## Step 3: Update `initialize()` to wire up the Base64 tab
+
+```java
+@FXML
+public void initialize() {
+    setupFileProcessingTab();
+    setupKeyValueTab();
+    setupBase64Tab(); // ADD THIS LINE
+}
+```
+
+## Step 4: Paste all Base64 methods into `MainController.java`
+
+```java
+// ─────────────────────────────────────────────────────────────────────────────
+// BASE64 TAB SETUP & HANDLERS
+// ─────────────────────────────────────────────────────────────────────────────
+
+private void setupBase64Tab() {
+    // Wire radio buttons to toggle group
+    encodeRadioButton.setToggleGroup(base64ToggleGroup);
+    decodeRadioButton.setToggleGroup(base64ToggleGroup);
+    encodeRadioButton.setSelected(true);
+
+    // Live char counter on output
+    base64OutputArea.textProperty().addListener((obs, oldVal, newVal) -> {
+        int count = newVal == null ? 0 : newVal.length();
+        base64CharCount.setText(count + " chars");
+    });
+
+    // Setup batch table columns
+    base64KeyColumn.setCellValueFactory(new PropertyValueFactory<>("key"));
+    base64OriginalColumn.setCellValueFactory(new PropertyValueFactory<>("originalValue"));
+    base64ResultColumn.setCellValueFactory(new PropertyValueFactory<>("processedValue"));
+
+    base64KeyColumn.prefWidthProperty().bind(base64ResultTable.widthProperty().multiply(0.20));
+    base64OriginalColumn.prefWidthProperty().bind(base64ResultTable.widthProperty().multiply(0.37));
+    base64ResultColumn.prefWidthProperty().bind(base64ResultTable.widthProperty().multiply(0.37));
+
+    base64OriginalColumn.setCellFactory(tc -> createWrappingCell());
+    base64ResultColumn.setCellFactory(tc -> createWrappingCell());
+
+    base64ResultTable.setItems(base64Results);
+    base64ProgressIndicator.setVisible(false);
+}
+
+// ── Mode change ──────────────────────────────────────────────────────────────
+
+@FXML
+private void handleBase64ModeChange() {
+    boolean isEncode = encodeRadioButton.isSelected();
+    base64InputLabel.setText(isEncode  ? "Plain Text Input"  : "Base64 Input");
+    base64OutputLabel.setText(isEncode ? "Base64 Output"     : "Plain Text Output");
+    base64ActionButton.setText(isEncode ? "Encode →"         : "Decode →");
+    base64InputArea.setPromptText(isEncode
+        ? "Enter plain text to encode..."
+        : "Enter Base64 string to decode...");
+    // Clear fields when switching mode to avoid confusion
+    base64InputArea.clear();
+    base64OutputArea.clear();
+}
+
+// ── Single encode / decode ────────────────────────────────────────────────────
+
+@FXML
+private void handleBase64Process() {
+    String input = base64InputArea.getText();
+    if (input == null || input.isBlank()) {
+        showError("Input cannot be empty");
+        return;
+    }
+
+    base64ProgressIndicator.setVisible(true);
+    base64OutputArea.clear();
+
+    new Thread(() -> {
+        try {
+            boolean isEncode = encodeRadioButton.isSelected();
+            String result = isEncode
+                ? encodeBase64(input)
+                : decodeBase64(input);
+
+            Platform.runLater(() -> {
+                base64ProgressIndicator.setVisible(false);
+                base64OutputArea.setText(result);
+            });
+
+        } catch (Exception e) {
+            Platform.runLater(() -> {
+                base64ProgressIndicator.setVisible(false);
+                showError("Processing failed: " + e.getMessage());
+            });
+        }
+    }).start();
+}
+
+// ── Paste from clipboard ─────────────────────────────────────────────────────
+
+@FXML
+private void handlePasteBase64() {
+    String content = Clipboard.getSystemClipboard().getString();
+    if (content != null && !content.isBlank()) {
+        base64InputArea.setText(content);
+    } else {
+        showWarning("Clipboard is empty or has no text content");
+    }
+}
+
+// ── Copy output ───────────────────────────────────────────────────────────────
+
+@FXML
+private void handleCopyBase64Output() {
+    String output = base64OutputArea.getText();
+    if (output == null || output.isBlank()) {
+        showWarning("Nothing to copy — output is empty");
+        return;
+    }
+    copyToClipboard(output);
+    showInfo("Output copied to clipboard!");
+}
+
+// ── Swap input ↔ output ────────────────────────────────────────────────────────
+
+@FXML
+private void handleBase64Swap() {
+    String currentOutput = base64OutputArea.getText();
+    if (currentOutput == null || currentOutput.isBlank()) {
+        showWarning("Output is empty — nothing to swap");
+        return;
+    }
+    base64InputArea.setText(currentOutput);
+    base64OutputArea.clear();
+
+    // Auto-flip mode
+    if (encodeRadioButton.isSelected()) {
+        decodeRadioButton.setSelected(true);
+    } else {
+        encodeRadioButton.setSelected(true);
+    }
+    handleBase64ModeChange();
+    base64InputArea.setText(currentOutput); // restore after clear in modeChange
+}
+
+// ── Clear ─────────────────────────────────────────────────────────────────────
+
+@FXML
+private void handleClearBase64() {
+    base64InputArea.clear();
+    base64OutputArea.clear();
+}
+
+@FXML
+private void handleClearBase64Batch() {
+    base64BatchInputArea.clear();
+}
+
+@FXML
+private void handleClearBase64Results() {
+    base64Results.clear();
+}
+
+// ── Batch encode ──────────────────────────────────────────────────────────────
+
+@FXML
+private void handleBase64BatchEncode() {
+    processBatchBase64(true);
+}
+
+// ── Batch decode ──────────────────────────────────────────────────────────────
+
+@FXML
+private void handleBase64BatchDecode() {
+    processBatchBase64(false);
+}
+
+private void processBatchBase64(boolean encode) {
+    String input = base64BatchInputArea.getText();
+    if (input == null || input.isBlank()) {
+        showError("Batch input cannot be empty");
+        return;
+    }
+
+    base64ProgressIndicator.setVisible(true);
+    base64Results.clear();
+
+    new Thread(() -> {
+        try {
+            List<KeyValueResult> results = parseBatchInput(input, encode);
+
+            Platform.runLater(() -> {
+                base64ProgressIndicator.setVisible(false);
+                base64Results.addAll(results);
+            });
+
+        } catch (Exception e) {
+            Platform.runLater(() -> {
+                base64ProgressIndicator.setVisible(false);
+                showError("Batch processing failed: " + e.getMessage());
+            });
+        }
+    }).start();
+}
+
+private List<KeyValueResult> parseBatchInput(String input, boolean encode) {
+    List<KeyValueResult> results = new ArrayList<>();
+    String trimmed = input.trim();
+
+    // Try JSON first
+    if (trimmed.startsWith("{")) {
+        try {
+            org.json.JSONObject json = new org.json.JSONObject(trimmed);
+            for (String key : json.keySet()) {
+                String original = json.getString(key);
+                String processed = processBase64Value(original, encode);
+                results.add(new KeyValueResult(key, original, processed));
+            }
+            return results;
+        } catch (Exception ignored) {
+            // Fall through to comma-separated parsing
+        }
+    }
+
+    // Comma-separated key=value pairs
+    String[] pairs = trimmed.split(",(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)");
+    for (String pair : pairs) {
+        pair = pair.trim();
+        if (pair.isEmpty()) continue;
+
+        int eq = pair.indexOf('=');
+        if (eq > 0) {
+            String key      = pair.substring(0, eq).trim();
+            String original = pair.substring(eq + 1).trim()
+                                  .replaceAll("^\"|\"$", ""); // strip surrounding quotes
+            String processed = processBase64Value(original, encode);
+            results.add(new KeyValueResult(key, original, processed));
+        } else {
+            // No key — treat entire token as value
+            String processed = processBase64Value(pair, encode);
+            results.add(new KeyValueResult("-", pair, processed));
+        }
+    }
+
+    return results;
+}
+
+private String processBase64Value(String value, boolean encode) {
+    try {
+        return encode ? encodeBase64(value) : decodeBase64(value);
+    } catch (Exception e) {
+        return "ERROR: " + e.getMessage();
+    }
+}
+
+// ── Batch copy helpers ────────────────────────────────────────────────────────
+
+@FXML
+private void handleCopySelectedBase64Row() {
+    KeyValueResult selected = base64ResultTable.getSelectionModel().getSelectedItem();
+    if (selected == null) {
+        showWarning("Please select a row to copy");
+        return;
+    }
+    copyToClipboard(selected.getKey() + "=" + selected.getProcessedValue());
+    showInfo("Row copied to clipboard!");
+}
+
+@FXML
+private void handleCopyAllBase64Rows() {
+    if (base64Results.isEmpty()) {
+        showWarning("No results to copy");
+        return;
+    }
+    StringBuilder sb = new StringBuilder();
+    base64Results.forEach(r ->
+        sb.append(r.getKey()).append("=").append(r.getProcessedValue()).append("\n")
+    );
+    copyToClipboard(sb.toString());
+    showInfo("All rows copied to clipboard!");
+}
+
+// ── Core Base64 encode / decode ────────────────────────────────────────────────
+
+private String encodeBase64(String input) {
+    return java.util.Base64.getEncoder().encodeToString(input.getBytes(StandardCharsets.UTF_8));
+}
+
+private String decodeBase64(String input) {
+    // Strip any whitespace / line breaks that sneak in from copy-paste
+    String cleaned = input.replaceAll("\\s+", "");
+    byte[] decoded = java.util.Base64.getDecoder().decode(cleaned);
+    return new String(decoded, StandardCharsets.UTF_8);
+}
+```
+
+## Step 5: Add to CSS (paste at the bottom of `style.css`)
+
+```css
+/* Base64 char counter label */
+.char-count-label {
+    -fx-font-size: 11px;
+    -fx-text-fill: #718096;
+    -fx-font-style: italic;
+}
+```
+
+## Summary of what you get:
+
+| Feature | Details |
+|---|---|
+| Single encode/decode | Full text area with live char counter |
+| Mode toggle | Radio buttons flip labels, prompts & button text |
+| Swap button | Moves output → input and flips mode automatically |
+| Paste button | Pulls directly from system clipboard |
+| Copy button | Copies output to clipboard instantly |
+| Batch processing | Comma-separated or JSON key-value pairs |
+| Batch table | Key / Original / Result columns with copy single or all |
+| Error handling | Invalid Base64 input shows clear error per cell |
