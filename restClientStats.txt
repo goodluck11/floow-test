@@ -310,3 +310,66 @@ DefaultConnectionKeepAliveStrategy keepAliveStrategy = new DefaultConnectionKeep
  * The Validation: Use setValidateAfterInactivity to ensure you don't lease a dead socket.
 Would you like me to provide a small code snippet to log the specific "Connection Request Timeout" exception so you can confirm if the 15s is spent waiting for a connection or reading from it?
 
+
+
+
+
+============================== Finally ==================
+
+
+To catch exactly where that 15-second delay is happening in your RestClient, you can use an interceptor that specifically catches ConnectionRequestTimeoutException versus a standard SocketTimeoutException.
+This is the "Smoking Gun" test:
+ * If it catches a ConnectionRequestTimeout, your pool is too small or leaking.
+ * If it catches a SocketTimeout, the internal API is hanging or the network is dropping packets.
+1. The Diagnostic Interceptor
+Add this to your RestClient configuration. It will log the exact phase where the 15s failure occurs.
+public class RestClientDiagnosticInterceptor implements ClientHttpRequestInterceptor {
+
+    @Override
+    public ClientHttpResponse intercept(HttpRequest request, byte[] body, ClientHttpRequestExecution execution) throws IOException {
+        long start = System.currentTimeMillis();
+        try {
+            ClientHttpResponse response = execution.execute(request, body);
+            long duration = System.currentTimeMillis() - start;
+            System.out.println("✅ Success: " + request.getURI() + " took " + duration + "ms");
+            return response;
+        } catch (org.apache.hc.client5.http.ConnectionRequestTimeoutException e) {
+            // This happens BEFORE the request even leaves your service
+            System.err.println("❌ POOL ERROR: No connection available after 5s waiting in queue!");
+            throw e;
+        } catch (java.net.SocketTimeoutException e) {
+            // This happens AFTER the connection is made, while waiting for bytes
+            long duration = System.currentTimeMillis() - start;
+            System.err.println("❌ READ ERROR: Internal API didn't respond within 15s limit. Total elapsed: " + duration + "ms");
+            throw e;
+        } catch (IOException e) {
+            System.err.println("❌ OTHER ERROR: " + e.getMessage());
+            throw e;
+        }
+    }
+}
+
+2. Attaching it to your RestClient
+@Bean
+public RestClient restClient(HttpClient httpClient) {
+    return RestClient.builder()
+            .requestFactory(new HttpComponentsClientHttpRequestFactory(httpClient))
+            .requestInterceptor(new RestClientDiagnosticInterceptor())
+            .build();
+}
+
+3. Understanding the "15s Window"
+Because you have a 5s Connection Request Timeout and a 15s Socket Timeout, here is how the math usually breaks down during your k6 failure:
+| Scenario | What happened? | Time Seen |
+|---|---|---|
+| Pool Saturated | Request waited 5s for a connection, failed. | 5,000ms |
+| Connection Leak | Request waited 5s, magically got a "zombie" connection, then waited 15s for data that never came. | ~20,000ms |
+| Slow API / Proxy | Connection was instant, but the API took 15s to send bytes. | 15,000ms |
+4. Pro-Tip: Check for "Stale" Connections
+Since you are using HC5, ensure you aren't being bit by the "Stale Connection" bug. If the internal API closes the connection, but your pool doesn't check it, you'll wait for a full SocketTimeout before failing.
+Add this to your PoolingHttpClientConnectionManagerBuilder:
+.setValidateAfterInactivity(TimeValue.ofMilliseconds(1000)) // Check if connection is alive if idle > 1s
+
+Would you like me to help you interpret the logs once you run a k6 test with this diagnostic interceptor?
+
+
