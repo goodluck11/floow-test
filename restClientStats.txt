@@ -1,0 +1,119 @@
+To diagnose this, you can enable a background task to log the Apache HttpClient 5 connection pool metrics. This will tell you exactly how many requests are "Leasing" (active) versus "Pending" (queued).
+1. Monitoring the Connection Pool
+Add this temporary "Monitor" component to your Spring Boot application. It will print the pool status every second while you run your k6 test.
+@Component
+public class ConnectionPoolMonitor {
+
+    private final PoolingHttpClientConnectionManager connectionManager;
+
+    // Inject the manager you used in your RestClient config
+    public ConnectionPoolMonitor(PoolingHttpClientConnectionManager connectionManager) {
+        this.connectionManager = connectionManager;
+    }
+
+    @Scheduled(fixedDelay = 1000)
+    public void logPoolStats() {
+        PoolStats totalStats = connectionManager.getTotalStats();
+        System.out.printf("[POOL STATS] Max: %d | Leased: %d | Pending: %d | Available: %d%n",
+                totalStats.getMax(),
+                totalStats.getLeased(),
+                totalStats.getPending(), // This is the "waiting room"
+                totalStats.getAvailable());
+    }
+}
+
+What to look for during the 15s delays:
+ * If Pending is greater than 0, your threads are stuck in a queue.
+ * If Leased is stuck at its maximum (e.g., 5 or 25), your pool is too small.
+2. Tuning the Timeouts
+Since you are seeing "Read Timeouts" at the 15s mark, you should explicitly define your timeout strategy. In HttpClient 5, these are configured via RequestConfig and ConnectionConfig.
+@Bean
+public RestClient restClient() {
+    // 1. Connection-level settings
+    ConnectionConfig connectionConfig = ConnectionConfig.custom()
+            .setConnectTimeout(Timeout.ofSeconds(2)) // Time to establish TCP handshake
+            .setSocketTimeout(Timeout.ofSeconds(15)) // Time spent waiting for data (Read Timeout)
+            .build();
+
+    // 2. Request-level settings (The "Queue" timeout)
+    RequestConfig requestConfig = RequestConfig.custom()
+            .setConnectionRequestTimeout(Timeout.ofSeconds(5)) // How long to wait in the pool queue
+            .build();
+
+    PoolingHttpClientConnectionManager connectionManager = PoolingHttpClientConnectionManagerBuilder.create()
+            .setDefaultConnectionConfig(connectionConfig)
+            .setMaxTotal(200)
+            .setDefaultMaxPerRoute(100)
+            .build();
+
+    CloseableHttpClient httpClient = HttpClients.custom()
+            .setConnectionManager(connectionManager)
+            .setDefaultRequestConfig(requestConfig)
+            .build();
+
+    return RestClient.builder()
+            .requestFactory(new HttpComponentsClientHttpRequestFactory(httpClient))
+            .build();
+}
+
+3. Why k6 "Direct" is different
+When you run k6 directly against the Internal API:
+ * No Queueing: k6 spins up OS-level threads/goroutines that open connections immediately.
+ * Ephemeral Ports: k6 uses a wide range of source ports to avoid the bottlenecks a single JVM instance faces.
+ * No Intermediate Logic: Your Spring Boot service likely has a Tomcat Thread Pool that might also be saturating.
+Final Verification Step
+Run your k6 test with the logPoolStats monitor active. If you see Pending: 50 and Leased: 5, you have confirmed that the 15s delay is simply requests waiting for their turn to use one of the 5 "pipes" to the internal API.
+Would you like me to help you adjust your Tomcat thread settings as well, in case the bottleneck is at the entry point of your service?
+
+
+
+
+
+This discrepancy (600ms vs. 15s) is the "smoking gun" for Connection Pool Starvation.
+When you hit the API directly with k6, there is no middleman. When you go through your Spring Boot service, your request is likely spending 14.4 seconds sitting in a queue inside your own service before it even attempts to talk to the internal API.
+Here is exactly why that 15-second gap is happening:
+1. The "Waiting Room" Effect (Connection Request Timeout)
+In Apache HttpClient 5 (the engine under RestClient), there are three distinct timeouts. The one killing you right now is the Connection Request Timeout.
+ * Direct k6: Request → Internal API (600ms) → Done.
+ * Through Service: 1.  Request enters your Service.
+   2.  RestClient asks the Pool for a connection.
+   3.  The Pool is full (e.g., all 5 default connections are busy).
+   4.  Your request waits in a queue for a connection to become free.
+   5.  It waits and waits... eventually, a connection opens up after 14 seconds, or it hits a limit and throws a Read Timeout because the total time elapsed exceeded your configured threshold.
+2. Why "Read Timeout" specifically?
+You might wonder: "If it's waiting for a connection, why do I get a Read Timeout?"
+Most developers set a readTimeout (e.g., 15s) on the RestClient. Many HTTP clients start the "total request clock" the moment the execution begins. If the request spends 14.5 seconds waiting for a connection and 0.6 seconds actually talking to the API, the total time is 15.1 seconds.
+The client sees 15.1 > 15.0 and kills the request with a Read Timeout, even though the internal API was fast once it finally got the chance to talk.
+3. The Math of the Bottleneck
+Let's look at the numbers:
+ * Internal API Latency: 600ms (0.6s)
+ * Default Connections per Route: 5
+ * Max Throughput of your Service: 5 \text{ connections} / 0.6s \approx 8.3 \text{ requests per second}
+If k6 is sending 50 requests per second, but your service can only physically process 8.3 requests per second due to the pool limit, the "backlog" grows instantly.
+| Request # | Wait Time in Queue | Total Time Seen by k6 |
+|---|---|---|
+| 1-5 | 0s | 600ms |
+| 6-10 | 600ms | 1.2s |
+| 45-50 | ~5.4s | 6.0s |
+| 100+ | > 10s | Timeout! |
+4. The Fix: Open the Floodgates
+To match the performance you see when running k6 directly, you must increase the DefaultMaxPerRoute.
+In your RestClient configuration:
+PoolingHttpClientConnectionManager connectionManager = PoolingHttpClientConnectionManagerBuilder.create()
+    .setMaxTotal(500)          // Allow up to 500 total connections
+    .setDefaultMaxPerRoute(200) // Allow 200 concurrent connections to the SAME internal API
+    .build();
+
+CloseableHttpClient httpClient = HttpClients.custom()
+    .setConnectionManager(connectionManager)
+    .build();
+
+RestClient restClient = RestClient.builder()
+    .requestFactory(new HttpComponentsClientHttpRequestFactory(httpClient))
+    .build();
+
+5. Verify with this Test
+To prove this is the issue, run your k6 test against your service with only 1 Virtual User (VU).
+ * If the response time is 600ms, it’s 100% a pooling/concurrency issue.
+ * If the response time is still 15s, you have a network routing/proxy issue (like a misconfigured DNS or a slow load balancer between the two services).
+Would you like me to show you how to log the Pool Statistics in your Spring Boot logs so you can see the "Leased" vs "Pending" connections in real-time?
