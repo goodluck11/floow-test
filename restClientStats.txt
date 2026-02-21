@@ -117,3 +117,196 @@ To prove this is the issue, run your k6 test against your service with only 1 Vi
  * If the response time is 600ms, it’s 100% a pooling/concurrency issue.
  * If the response time is still 15s, you have a network routing/proxy issue (like a misconfigured DNS or a slow load balancer between the two services).
 Would you like me to show you how to log the Pool Statistics in your Spring Boot logs so you can see the "Leased" vs "Pending" connections in real-time?
+
+
+
+
+
+
+======//////
+
+
+That is a classic "Performance Paradox." Your settings look healthy on paper, and 10 VUs (Virtual Users) should easily be handled by a pool of 50.
+If your internal API only takes 600ms, but your service hits a 15s Read Timeout with only 10 concurrent users, the problem isn't the size of the pool—it’s that the connections in the pool are becoming "Stuck" or "Zombies."
+Here are the most likely reasons why this is happening despite your configuration:
+1. The "Connection Leak" (Most Likely)
+If your code calling RestClient does not fully consume the response body (e.g., you check a status code but don't read the string/object), that connection is not returned to the pool.
+ * The Symptom: Your 10 VUs quickly "leak" 50 connections. Once the 50th connection is leaked, the 51st request waits for the connection-request-timeout.
+ * The Math: 50 connections / 10 VUs = Each VU only needs to leak 5 times before the pool is dry.
+ * Why the 15s? Your request waits for a connection, finally gets one (perhaps after an idle eviction), but because the system is so backed up, the total time from start to finish crosses the 15s Socket Timeout.
+2. DNS Resolution or "IPv6 Ghosting"
+Sometimes the HttpClient spends a massive amount of time resolving the internal API's hostname.
+ * If your internal API is at internal-api.local, the client might try to resolve it via IPv6 first, wait for a 5s timeout, then failover to IPv4.
+ * If this happens on every new connection, it eats into your total time budget.
+3. The "Slow Consumer" on the Internal API
+If the internal API is fast for k6 (direct) but slow for your service, check if there is a Proxy or Sidecar (like Istio/Envoy) between your service and the internal API.
+ * A direct k6 call might bypass a proxy that your Spring Boot service is forced to use.
+ * If that proxy is struggling, it will hold the TCP socket open but send no data, eventually triggering your 15s Read Timeout.
+How to Diagnose This Immediately
+Step 1: Enable Connection Pool Logging
+Add this to your application.properties to see exactly what the pool is doing:
+logging.level.org.apache.hc.client5.http.impl.io.PoolingHttpClientConnectionManager=DEBUG
+logging.level.org.apache.hc.client5.http.wire=DEBUG
+
+Look for: Connection request: [route: ...][total kept alive: X; route allocated: Y of 50; total allocated: Z of 200]. If "allocated" hits 50 and stays there, you have a leak.
+Step 2: Ensure Response Consumption
+Ensure you are using RestClient in a way that closes the stream. For example:
+// GOOD: .body() or .toEntity() automatically handles closing
+var response = restClient.get()
+    .uri("/data")
+    .retrieve()
+    .body(String.class); 
+
+// RISKY: If you use .exchange(), you MUST close the response manually
+restClient.get()
+    .uri("/data")
+    .exchange((request, response) -> {
+        // If you don't read response.getBody(), the connection leaks!
+        return response.getStatusCode();
+    });
+
+Step 3: Check the "Time to First Byte" (TTFB)
+In your k6 results, look at the http_req_waiting metric.
+ * If http_req_waiting is near 15s, the internal API is simply not responding to your service.
+ * If http_req_connecting or http_req_blocked is high, the issue is inside your Spring Boot pool.
+Would you like me to show you a specific RestTemplate or RestClient interceptor that logs how long the connection pool wait time is for every request?
+
+
+
+
+=========≈==============================
+
+
+
+
+To track why your 600ms API is suddenly taking 15 seconds, we need to distinguish between "Time spent waiting for a connection" and "Time spent waiting for the server to talk."
+Standard interceptors usually only measure the time after the connection is grabbed. To see the full picture—including the "waiting room" time—we have to look at the ClientHttpRequestFactory level or use a custom metric.
+1. For RestTemplate (using Apache HC5)
+With RestTemplate, we can wrap the HttpComponentsClientHttpRequestFactory to see exactly how long the pool took to give us a "lease."
+public class PoolingTimerRequestFactory extends HttpComponentsClientHttpRequestFactory {
+
+    public PoolingTimerRequestFactory(HttpClient httpClient) {
+        super(httpClient);
+    }
+
+    @Override
+    protected HttpContext createHttpContext(HttpMethod httpMethod, URI uri) {
+        HttpContext context = HttpClientContext.create();
+        context.setAttribute("request.start_time", System.currentTimeMillis());
+        return context;
+    }
+}
+
+// In your Interceptor:
+public class PerformanceInterceptor implements ClientHttpRequestInterceptor {
+    @Override
+    public ClientHttpResponse intercept(HttpRequest request, byte[] body, 
+                                        ClientHttpRequestExecution execution) throws IOException {
+        long start = System.currentTimeMillis();
+        
+        ClientHttpResponse response = execution.execute(request, body);
+        
+        long duration = System.currentTimeMillis() - start;
+        System.out.printf("Total Request Time: %dms | URI: %s%n", duration, request.getURI());
+        
+        return response;
+    }
+}
+
+2. For RestClient (The Modern Way)
+Since RestClient uses a functional approach, you can bake the timing directly into the requestInterceptor. However, to catch the 15s Read Timeout before it kills the log, use a try-finally block.
+RestClient restClient = RestClient.builder()
+    .requestFactory(new HttpComponentsClientHttpRequestFactory(httpClient))
+    .requestInterceptor((request, body, execution) -> {
+        long start = System.nanoTime();
+        try {
+            return execution.execute(request, body);
+        } finally {
+            long elapsed = (System.nanoTime() - start) / 1_000_000;
+            if (elapsed > 1000) { // Log anything over 1 second
+                System.err.printf("[PERF ALERT] Request to %s took %dms%n", 
+                                  request.getURI(), elapsed);
+            }
+        }
+    })
+    .build();
+
+3. The "Hidden" Metric: Pool Stats
+The most effective way to see if your 50 connections are "stuck" is to expose the pool's internal state. If your Leased count hits 50 and stays there during your k6 test, you have found your leak.
+Add this "Watcher" thread or a scheduled task to your service during the load test:
+@Scheduled(fixedRate = 1000)
+public void logPoolStats() {
+    // You need a reference to your PoolingHttpClientConnectionManager
+    PoolStats totalStats = connectionManager.getTotalStats();
+    System.out.printf("Pool Stats -> Leased: %d, Pending: %d, Available: %d, Max: %d%n",
+        totalStats.getLeased(),   // Connections currently in use
+        totalStats.getPending(),  // Requests waiting for a connection (THIS IS YOUR 15s CULPRIT)
+        totalStats.getAvailable(),// Free connections in the pool
+        totalStats.getMax()       // Absolute ceiling
+    );
+}
+
+What to look for in the logs:
+ * Pending > 0: This means your 50 "Max Per Route" is too low or connections aren't being returned.
+ * Leased == Max: You have a connection leak. Somewhere in your code, a response is being received but the input stream is never closed.
+ * High Total Time but Low Internal API time: If logPoolStats shows 0 pending but the interceptor shows 15s, the bottleneck is the network/DNS or the internal API's TCP handshake.
+Would you like me to show you the common "Connection Leak" code patterns in Spring Boot so you can check your business logic for them?
+
+
+
+=======================================================
+
+
+To force-clean the pool and prevent these "zombies" from hanging around for 15 seconds, you can configure a Background Eviction Thread.
+While this is a "band-aid" for a leak, it ensures that if a connection is abandoned or the server silently drops it, your Spring Boot service won't sit there waiting for it forever.
+1. The "Brute Force" Evictor Configuration
+In Apache HttpClient 5, you can tell the connection manager to proactively scan for and kill idle or expired connections.
+@Bean
+public HttpClient hc5Client() {
+    PoolingHttpClientConnectionManager connectionManager = PoolingHttpClientConnectionManagerBuilder.create()
+            .setMaxTotal(200)
+            .setDefaultMaxPerRoute(50)
+            // 1. Validate connections that have been sitting idle before leasing them
+            .setValidateAfterInactivity(TimeValue.ofSeconds(2)) 
+            .build();
+
+    return HttpClients.custom()
+            .setConnectionManager(connectionManager)
+            // 2. Kill connections that are idle for more than 10 seconds
+            .evictIdleConnections(TimeValue.ofSeconds(10))
+            // 3. Kill connections that have outlived their TTL
+            .evictExpiredConnections()
+            .build();
+}
+
+2. Why this stops the 15s Timeout
+Without the evictor, if a connection becomes "stale" (the internal API closed it but your service didn't notice), your RestClient might try to reuse it.
+ * It sends the request into a "black hole."
+ * It waits for the Socket Timeout (15s) to trigger.
+ * With setValidateAfterInactivity, the client checks if the socket is still "alive" before giving it to your code. If it's dead, it drops it and gets you a fresh one in milliseconds.
+3. The "Silent Killer": Keep-Alive Mismatch
+If your Service thinks a connection is good for 25s (your current setting), but the internal API has a keep-alive timeout of 5s, you will have a "Race Condition" window of 20 seconds where your service will try to use a dead socket.
+The Fix: Always set your client-side keep-alive to be shorter than the server's.
+// Force a 5-second keep-alive if the server doesn't provide one
+DefaultConnectionKeepAliveStrategy keepAliveStrategy = new DefaultConnectionKeepAliveStrategy() {
+    @Override
+    public TimeValue getKeepAliveDuration(HttpResponse response, HttpContext context) {
+        TimeValue duration = super.getKeepAliveDuration(response, context);
+        if (duration.toMilliseconds() < 0) {
+            // Server didn't send a Keep-Alive header, default to 5 seconds
+            return TimeValue.ofSeconds(5);
+        }
+        return duration;
+    }
+};
+
+// Add to your HttpClient builder
+.setKeepAliveStrategy(keepAliveStrategy)
+
+4. Summary of the "600ms vs 15s" Fix
+ * The Leak: Check if you are using .exchange() without closing the body.
+ * The Pool: Ensure MaxPerRoute is at least 50 (which you have).
+ * The Evictor: Enable evictIdleConnections to clear the "zombies."
+ * The Validation: Use setValidateAfterInactivity to ensure you don't lease a dead socket.
+Would you like me to provide a small code snippet to log the specific "Connection Request Timeout" exception so you can confirm if the 15s is spent waiting for a connection or reading from it?
+
