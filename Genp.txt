@@ -1,0 +1,682 @@
+Here's the complete Password Generator tab with credential file management:
+
+## Step 1: Add to FXML (paste inside `<TabPane>` after Base64 tab)
+
+```xml
+<!-- Password Generator Tab -->
+<Tab text="Password Generator">
+    <ScrollPane fitToWidth="true" fitToHeight="true">
+        <VBox spacing="15" styleClass="content-pane">
+
+            <!-- Credential File Location -->
+            <VBox spacing="5">
+                <Label text="Credential File Location" styleClass="section-label"/>
+                <HBox spacing="10">
+                    <TextField fx:id="credFilePathField"
+                               promptText="Select or enter credential file path..."
+                               HBox.hgrow="ALWAYS"/>
+                    <Button text="Browse..." onAction="#handleBrowseCredFile"
+                            styleClass="primary-button"/>
+                </HBox>
+                <Label text="💡 File will be created if it doesn't exist"
+                       style="-fx-font-size: 11px; -fx-text-fill: #718096;"/>
+            </VBox>
+
+            <Separator/>
+
+            <!-- Password Type -->
+            <VBox spacing="5">
+                <Label text="Password Type" styleClass="section-label"/>
+                <HBox spacing="15">
+                    <RadioButton fx:id="customPasswordRadio" text="Custom Pattern" selected="true"
+                                 onAction="#handlePasswordTypeChange"/>
+                    <RadioButton fx:id="base64PasswordRadio" text="Base64 (URL-safe)"
+                                 onAction="#handlePasswordTypeChange"/>
+                    <RadioButton fx:id="base32PasswordRadio" text="Base32"
+                                 onAction="#handlePasswordTypeChange"/>
+                    <RadioButton fx:id="hexPasswordRadio" text="Hexadecimal"
+                                 onAction="#handlePasswordTypeChange"/>
+                    <RadioButton fx:id="uuidPasswordRadio" text="UUID"
+                                 onAction="#handlePasswordTypeChange"/>
+                </HBox>
+            </VBox>
+
+            <!-- Length (for Custom, Base64, Base32, Hex) -->
+            <HBox spacing="15" fx:id="passwordLengthContainer">
+                <VBox spacing="5" HBox.hgrow="ALWAYS">
+                    <Label text="Password Length" styleClass="section-label"/>
+                    <Spinner fx:id="passwordLengthSpinner" editable="true" maxWidth="Infinity"/>
+                </VBox>
+            </HBox>
+
+            <!-- Pattern Configuration (for Custom type only) -->
+            <VBox spacing="5" fx:id="patternContainer">
+                <Label text="Character Pattern" styleClass="section-label"/>
+                <GridPane hgap="15" vgap="10">
+                    <CheckBox fx:id="includeUppercaseCheck" text="Uppercase (A-Z)"
+                              GridPane.columnIndex="0" GridPane.rowIndex="0"/>
+                    <CheckBox fx:id="includeLowercaseCheck" text="Lowercase (a-z)"
+                              GridPane.columnIndex="1" GridPane.rowIndex="0"/>
+                    <CheckBox fx:id="includeNumbersCheck" text="Numbers (0-9)"
+                              GridPane.columnIndex="0" GridPane.rowIndex="1"/>
+                    <CheckBox fx:id="includeSymbolsCheck" text="Symbols"
+                              GridPane.columnIndex="1" GridPane.rowIndex="1"
+                              onAction="#handleSymbolsCheckChange"/>
+                </GridPane>
+
+                <!-- Custom Symbols -->
+                <VBox spacing="5" fx:id="customSymbolsContainer" managed="false" visible="false">
+                    <HBox spacing="10" alignment="CENTER_LEFT">
+                        <CheckBox fx:id="useCustomSymbolsCheck" text="Use custom symbols"
+                                  onAction="#handleUseCustomSymbolsChange"/>
+                        <Label text="(Default: !@#$%^&amp;*()_+-=[]{}|;:,.<>?)"
+                               style="-fx-font-size: 11px; -fx-text-fill: #718096;"/>
+                    </HBox>
+                    <TextField fx:id="customSymbolsField"
+                               promptText="Enter custom symbols..."
+                               managed="false" visible="false"/>
+                </VBox>
+            </VBox>
+
+            <Separator/>
+
+            <!-- Password Label -->
+            <VBox spacing="5">
+                <Label text="Password Label" styleClass="section-label"/>
+                <TextField fx:id="passwordLabelField"
+                           promptText="e.g., database.password, api.key, jwt.secret"/>
+                <Label text="💡 This will be used as the key in the credential file"
+                       style="-fx-font-size: 11px; -fx-text-fill: #718096;"/>
+            </VBox>
+
+            <!-- Generate Button -->
+            <HBox spacing="10" alignment="CENTER">
+                <Button text="🔑 Generate Password" onAction="#handleGeneratePassword"
+                        styleClass="primary-button" prefWidth="200"/>
+                <ProgressIndicator fx:id="passwordProgressIndicator" prefWidth="30" prefHeight="30"/>
+            </HBox>
+
+            <!-- Generated Password Display -->
+            <VBox spacing="5">
+                <HBox alignment="CENTER_LEFT" spacing="10">
+                    <Label text="Generated Password" styleClass="section-label"/>
+                    <Pane HBox.hgrow="ALWAYS"/>
+                    <Label fx:id="passwordStrengthLabel" text="" styleClass="strength-label"/>
+                    <Button text="Copy" onAction="#handleCopyPassword" styleClass="default-button"/>
+                </HBox>
+                <TextArea fx:id="generatedPasswordArea"
+                          editable="false"
+                          prefHeight="80"
+                          styleClass="result-area"
+                          wrapText="true"
+                          promptText="Generated password will appear here..."/>
+            </VBox>
+
+            <!-- Save to File Button -->
+            <HBox spacing="10" alignment="CENTER">
+                <Button text="💾 Save to Credential File" onAction="#handleSaveToCredFile"
+                        styleClass="secondary-button" prefWidth="200"/>
+                <Button text="🔄 Generate & Save" onAction="#handleGenerateAndSave"
+                        styleClass="primary-button" prefWidth="200"/>
+            </HBox>
+
+            <Separator/>
+
+            <!-- Recent Generations -->
+            <VBox spacing="5" VBox.vgrow="ALWAYS">
+                <Label text="Recent Generations (Session Only)" styleClass="section-label"/>
+                <TableView fx:id="recentPasswordsTable" prefHeight="200" styleClass="result-table">
+                    <columns>
+                        <TableColumn fx:id="passwordTimeColumn" text="Time"/>
+                        <TableColumn fx:id="passwordLabelColumn" text="Label"/>
+                        <TableColumn fx:id="passwordTypeColumn" text="Type"/>
+                        <TableColumn fx:id="passwordValueColumn" text="Password"/>
+                    </columns>
+                </TableView>
+
+                <HBox spacing="10" alignment="CENTER_RIGHT">
+                    <Button text="Copy Selected" onAction="#handleCopySelectedPassword"
+                            styleClass="default-button"/>
+                    <Button text="Save Selected to File" onAction="#handleSaveSelectedToFile"
+                            styleClass="default-button"/>
+                    <Button text="Clear History" onAction="#handleClearPasswordHistory"
+                            styleClass="default-button"/>
+                </HBox>
+            </VBox>
+
+        </VBox>
+    </ScrollPane>
+</Tab>
+```
+
+## Step 2: Add Password Entry Class
+
+Create `src/main/java/io/erikka/vesta/model/PasswordEntry.java`:
+
+```java
+package io.erikka.vesta.model;
+
+import javafx.beans.property.SimpleStringProperty;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+
+public class PasswordEntry {
+    private final SimpleStringProperty time;
+    private final SimpleStringProperty label;
+    private final SimpleStringProperty type;
+    private final SimpleStringProperty password;
+    private final LocalDateTime timestamp;
+
+    public PasswordEntry(String label, String type, String password) {
+        this.timestamp = LocalDateTime.now();
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("HH:mm:ss");
+        this.time = new SimpleStringProperty(this.timestamp.format(formatter));
+        this.label = new SimpleStringProperty(label);
+        this.type = new SimpleStringProperty(type);
+        this.password = new SimpleStringProperty(password);
+    }
+
+    public String getTime() { return time.get(); }
+    public String getLabel() { return label.get(); }
+    public String getType() { return type.get(); }
+    public String getPassword() { return password.get(); }
+    public LocalDateTime getTimestamp() { return timestamp; }
+
+    public SimpleStringProperty timeProperty() { return time; }
+    public SimpleStringProperty labelProperty() { return label; }
+    public SimpleStringProperty typeProperty() { return type; }
+    public SimpleStringProperty passwordProperty() { return password; }
+}
+```
+
+## Step 3: Add to MainController.java - FXML Fields
+
+```java
+// ── Password Generator Tab ──────────────────────────────────────────
+@FXML private TextField credFilePathField;
+@FXML private RadioButton customPasswordRadio;
+@FXML private RadioButton base64PasswordRadio;
+@FXML private RadioButton base32PasswordRadio;
+@FXML private RadioButton hexPasswordRadio;
+@FXML private RadioButton uuidPasswordRadio;
+@FXML private HBox passwordLengthContainer;
+@FXML private Spinner<Integer> passwordLengthSpinner;
+@FXML private VBox patternContainer;
+@FXML private CheckBox includeUppercaseCheck;
+@FXML private CheckBox includeLowercaseCheck;
+@FXML private CheckBox includeNumbersCheck;
+@FXML private CheckBox includeSymbolsCheck;
+@FXML private VBox customSymbolsContainer;
+@FXML private CheckBox useCustomSymbolsCheck;
+@FXML private TextField customSymbolsField;
+@FXML private TextField passwordLabelField;
+@FXML private TextArea generatedPasswordArea;
+@FXML private Label passwordStrengthLabel;
+@FXML private ProgressIndicator passwordProgressIndicator;
+@FXML private TableView<PasswordEntry> recentPasswordsTable;
+@FXML private TableColumn<PasswordEntry, String> passwordTimeColumn;
+@FXML private TableColumn<PasswordEntry, String> passwordLabelColumn;
+@FXML private TableColumn<PasswordEntry, String> passwordTypeColumn;
+@FXML private TableColumn<PasswordEntry, String> passwordValueColumn;
+
+private final ObservableList<PasswordEntry> recentPasswords = FXCollections.observableArrayList();
+private final ToggleGroup passwordTypeToggleGroup = new ToggleGroup();
+private static final String DEFAULT_SYMBOLS = "!@#$%^&*()_+-=[]{}|;:,.<>?";
+```
+
+## Step 4: Update initialize()
+
+```java
+@FXML
+public void initialize() {
+    setupFileProcessingTab();
+    setupKeyValueTab();
+    setupBase64Tab();
+    setupPasswordGeneratorTab(); // ADD THIS LINE
+}
+```
+
+## Step 5: Add Password Generator Methods to MainController.java
+
+```java
+// ─────────────────────────────────────────────────────────────────────────────
+// PASSWORD GENERATOR TAB SETUP & HANDLERS
+// ─────────────────────────────────────────────────────────────────────────────
+
+private void setupPasswordGeneratorTab() {
+    // Wire radio buttons
+    customPasswordRadio.setToggleGroup(passwordTypeToggleGroup);
+    base64PasswordRadio.setToggleGroup(passwordTypeToggleGroup);
+    base32PasswordRadio.setToggleGroup(passwordTypeToggleGroup);
+    hexPasswordRadio.setToggleGroup(passwordTypeToggleGroup);
+    uuidPasswordRadio.setToggleGroup(passwordTypeToggleGroup);
+    customPasswordRadio.setSelected(true);
+
+    // Setup length spinner
+    SpinnerValueFactory<Integer> lengthFactory =
+        new SpinnerValueFactory.IntegerSpinnerValueFactory(8, 128, 16, 1);
+    passwordLengthSpinner.setValueFactory(lengthFactory);
+    passwordLengthSpinner.setEditable(true);
+
+    // Default pattern selections
+    includeUppercaseCheck.setSelected(true);
+    includeLowercaseCheck.setSelected(true);
+    includeNumbersCheck.setSelected(true);
+    includeSymbolsCheck.setSelected(true);
+
+    // Setup recent passwords table
+    passwordTimeColumn.setCellValueFactory(new PropertyValueFactory<>("time"));
+    passwordLabelColumn.setCellValueFactory(new PropertyValueFactory<>("label"));
+    passwordTypeColumn.setCellValueFactory(new PropertyValueFactory<>("type"));
+    passwordValueColumn.setCellValueFactory(new PropertyValueFactory<>("password"));
+
+    passwordTimeColumn.prefWidthProperty().bind(recentPasswordsTable.widthProperty().multiply(0.15));
+    passwordLabelColumn.prefWidthProperty().bind(recentPasswordsTable.widthProperty().multiply(0.25));
+    passwordTypeColumn.prefWidthProperty().bind(recentPasswordsTable.widthProperty().multiply(0.15));
+    passwordValueColumn.prefWidthProperty().bind(recentPasswordsTable.widthProperty().multiply(0.40));
+
+    passwordValueColumn.setCellFactory(tc -> createWrappingCell());
+
+    recentPasswordsTable.setItems(recentPasswords);
+    passwordProgressIndicator.setVisible(false);
+
+    // Set default credential file path
+    String userHome = System.getProperty("user.home");
+    credFilePathField.setText(userHome + "/vesta-credentials.txt");
+}
+
+// ── Type change ──────────────────────────────────────────────────────────────
+
+@FXML
+private void handlePasswordTypeChange() {
+    boolean isCustom = customPasswordRadio.isSelected();
+    boolean isUuid = uuidPasswordRadio.isSelected();
+
+    // Show/hide length spinner (UUID doesn't need length)
+    passwordLengthContainer.setVisible(!isUuid);
+    passwordLengthContainer.setManaged(!isUuid);
+
+    // Show/hide pattern options (only for custom)
+    patternContainer.setVisible(isCustom);
+    patternContainer.setManaged(isCustom);
+}
+
+@FXML
+private void handleSymbolsCheckChange() {
+    boolean symbolsEnabled = includeSymbolsCheck.isSelected();
+    customSymbolsContainer.setVisible(symbolsEnabled);
+    customSymbolsContainer.setManaged(symbolsEnabled);
+}
+
+@FXML
+private void handleUseCustomSymbolsChange() {
+    boolean useCustom = useCustomSymbolsCheck.isSelected();
+    customSymbolsField.setVisible(useCustom);
+    customSymbolsField.setManaged(useCustom);
+}
+
+// ── Browse credential file ───────────────────────────────────────────────────
+
+@FXML
+private void handleBrowseCredFile() {
+    FileChooser fileChooser = new FileChooser();
+    fileChooser.setTitle("Select Credential File");
+    fileChooser.getExtensionFilters().addAll(
+        new FileChooser.ExtensionFilter("Text Files", "*.txt"),
+        new FileChooser.ExtensionFilter("All Files", "*.*")
+    );
+
+    // Set initial directory to user home
+    File initialDir = new File(System.getProperty("user.home"));
+    if (initialDir.exists()) {
+        fileChooser.setInitialDirectory(initialDir);
+    }
+
+    File file = fileChooser.showSaveDialog(credFilePathField.getScene().getWindow());
+    if (file != null) {
+        credFilePathField.setText(file.getAbsolutePath());
+    }
+}
+
+// ── Generate password ────────────────────────────────────────────────────────
+
+@FXML
+private void handleGeneratePassword() {
+    passwordProgressIndicator.setVisible(true);
+    generatedPasswordArea.clear();
+    passwordStrengthLabel.setText("");
+
+    new Thread(() -> {
+        try {
+            String password = generatePasswordByType();
+
+            Platform.runLater(() -> {
+                passwordProgressIndicator.setVisible(false);
+                generatedPasswordArea.setText(password);
+                updatePasswordStrength(password);
+            });
+
+        } catch (Exception e) {
+            Platform.runLater(() -> {
+                passwordProgressIndicator.setVisible(false);
+                showError("Password generation failed: " + e.getMessage());
+            });
+        }
+    }).start();
+}
+
+private String generatePasswordByType() {
+    if (customPasswordRadio.isSelected()) {
+        return generateCustomPassword();
+    } else if (base64PasswordRadio.isSelected()) {
+        return generateBase64Password();
+    } else if (base32PasswordRadio.isSelected()) {
+        return generateBase32Password();
+    } else if (hexPasswordRadio.isSelected()) {
+        return generateHexPassword();
+    } else if (uuidPasswordRadio.isSelected()) {
+        return java.util.UUID.randomUUID().toString();
+    }
+    throw new IllegalStateException("No password type selected");
+}
+
+private String generateCustomPassword() {
+    int length = passwordLengthSpinner.getValue();
+    StringBuilder charset = new StringBuilder();
+
+    if (includeUppercaseCheck.isSelected()) {
+        charset.append("ABCDEFGHIJKLMNOPQRSTUVWXYZ");
+    }
+    if (includeLowercaseCheck.isSelected()) {
+        charset.append("abcdefghijklmnopqrstuvwxyz");
+    }
+    if (includeNumbersCheck.isSelected()) {
+        charset.append("0123456789");
+    }
+    if (includeSymbolsCheck.isSelected()) {
+        String symbols = useCustomSymbolsCheck.isSelected() && !customSymbolsField.getText().isBlank()
+            ? customSymbolsField.getText()
+            : DEFAULT_SYMBOLS;
+        charset.append(symbols);
+    }
+
+    if (charset.length() == 0) {
+        throw new IllegalArgumentException("At least one character type must be selected");
+    }
+
+    java.security.SecureRandom random = new java.security.SecureRandom();
+    StringBuilder password = new StringBuilder(length);
+
+    for (int i = 0; i < length; i++) {
+        int index = random.nextInt(charset.length());
+        password.append(charset.charAt(index));
+    }
+
+    return password.toString();
+}
+
+private String generateBase64Password() {
+    int length = passwordLengthSpinner.getValue();
+    java.security.SecureRandom random = new java.security.SecureRandom();
+    byte[] bytes = new byte[length * 3 / 4]; // Adjust for Base64 expansion
+    random.nextBytes(bytes);
+    String base64 = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+    return base64.substring(0, Math.min(length, base64.length()));
+}
+
+private String generateBase32Password() {
+    int length = passwordLengthSpinner.getValue();
+    String base32Chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+    java.security.SecureRandom random = new java.security.SecureRandom();
+    StringBuilder password = new StringBuilder(length);
+
+    for (int i = 0; i < length; i++) {
+        password.append(base32Chars.charAt(random.nextInt(base32Chars.length())));
+    }
+
+    return password.toString();
+}
+
+private String generateHexPassword() {
+    int length = passwordLengthSpinner.getValue();
+    java.security.SecureRandom random = new java.security.SecureRandom();
+    byte[] bytes = new byte[length / 2 + 1];
+    random.nextBytes(bytes);
+    StringBuilder hex = new StringBuilder();
+    for (byte b : bytes) {
+        hex.append(String.format("%02x", b));
+    }
+    return hex.substring(0, length);
+}
+
+private void updatePasswordStrength(String password) {
+    int score = calculatePasswordStrength(password);
+    String strength;
+    String color;
+
+    if (score < 3) {
+        strength = "Weak";
+        color = "#e53e3e";
+    } else if (score < 4) {
+        strength = "Medium";
+        color = "#dd6b20";
+    } else if (score < 5) {
+        strength = "Strong";
+        color = "#38a169";
+    } else {
+        strength = "Very Strong";
+        color = "#2f855a";
+    }
+
+    passwordStrengthLabel.setText("Strength: " + strength);
+    passwordStrengthLabel.setStyle("-fx-text-fill: " + color + "; -fx-font-weight: bold;");
+}
+
+private int calculatePasswordStrength(String password) {
+    int score = 0;
+
+    if (password.length() >= 8) score++;
+    if (password.length() >= 12) score++;
+    if (password.length() >= 16) score++;
+    if (password.matches(".*[A-Z].*")) score++;
+    if (password.matches(".*[a-z].*")) score++;
+    if (password.matches(".*\\d.*")) score++;
+    if (password.matches(".*[!@#$%^&*()_+\\-=\\[\\]{}|;:,.<>?].*")) score++;
+
+    return Math.min(score, 7);
+}
+
+// ── Copy password ────────────────────────────────────────────────────────────
+
+@FXML
+private void handleCopyPassword() {
+    String password = generatedPasswordArea.getText();
+    if (password == null || password.isBlank()) {
+        showWarning("No password to copy");
+        return;
+    }
+    copyToClipboard(password);
+    showInfo("Password copied to clipboard!");
+}
+
+// ── Save to credential file ──────────────────────────────────────────────────
+
+@FXML
+private void handleSaveToCredFile() {
+    String password = generatedPasswordArea.getText();
+    if (password == null || password.isBlank()) {
+        showError("No password generated to save");
+        return;
+    }
+
+    String label = passwordLabelField.getText();
+    if (label == null || label.isBlank()) {
+        showError("Please enter a password label");
+        return;
+    }
+
+    String credFilePath = credFilePathField.getText();
+    if (credFilePath == null || credFilePath.isBlank()) {
+        showError("Please select a credential file location");
+        return;
+    }
+
+    try {
+        saveToCredentialFile(credFilePath, label, password);
+        addToRecentPasswords(label, password);
+        showInfo("Password saved to credential file!");
+        passwordLabelField.clear();
+    } catch (IOException e) {
+        showError("Failed to save to file: " + e.getMessage());
+    }
+}
+
+@FXML
+private void handleGenerateAndSave() {
+    handleGeneratePassword();
+    // Wait a bit for generation to complete, then save
+    new Thread(() -> {
+        try {
+            Thread.sleep(500); // Wait for generation
+            Platform.runLater(this::handleSaveToCredFile);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }).start();
+}
+
+private void saveToCredentialFile(String filePath, String label, String password) throws IOException {
+    File file = new File(filePath);
+
+    // Create file if it doesn't exist
+    if (!file.exists()) {
+        file.getParentFile().mkdirs();
+        file.createNewFile();
+    }
+
+    // Format timestamp
+    LocalDateTime now = LocalDateTime.now();
+    DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd MMMM, yyyy - h:mma", Locale.ENGLISH);
+    String timestamp = now.format(formatter);
+
+    // Prepare entry
+    String entry = String.format("%n# %s%n%s=%s%n", timestamp, label, password);
+
+    // Append to file
+    Files.write(
+        file.toPath(),
+        entry.getBytes(StandardCharsets.UTF_8),
+        StandardOpenOption.CREATE,
+        StandardOpenOption.APPEND
+    );
+}
+
+private void addToRecentPasswords(String label, String password) {
+    String type = getSelectedPasswordType();
+    PasswordEntry entry = new PasswordEntry(label, type, password);
+    recentPasswords.add(0, entry); // Add to beginning
+
+    // Limit to 50 entries
+    if (recentPasswords.size() > 50) {
+        recentPasswords.remove(50, recentPasswords.size());
+    }
+}
+
+private String getSelectedPasswordType() {
+    if (customPasswordRadio.isSelected()) return "Custom";
+    if (base64PasswordRadio.isSelected()) return "Base64";
+    if (base32PasswordRadio.isSelected()) return "Base32";
+    if (hexPasswordRadio.isSelected()) return "Hex";
+    if (uuidPasswordRadio.isSelected()) return "UUID";
+    return "Unknown";
+}
+
+// ── Recent passwords table actions ───────────────────────────────────────────
+
+@FXML
+private void handleCopySelectedPassword() {
+    PasswordEntry selected = recentPasswordsTable.getSelectionModel().getSelectedItem();
+    if (selected == null) {
+        showWarning("Please select a password to copy");
+        return;
+    }
+    copyToClipboard(selected.getPassword());
+    showInfo("Password copied to clipboard!");
+}
+
+@FXML
+private void handleSaveSelectedToFile() {
+    PasswordEntry selected = recentPasswordsTable.getSelectionModel().getSelectedItem();
+    if (selected == null) {
+        showWarning("Please select a password to save");
+        return;
+    }
+
+    String credFilePath = credFilePathField.getText();
+    if (credFilePath == null || credFilePath.isBlank()) {
+        showError("Please select a credential file location");
+        return;
+    }
+
+    try {
+        saveToCredentialFile(credFilePath, selected.getLabel(), selected.getPassword());
+        showInfo("Password saved to credential file!");
+    } catch (IOException e) {
+        showError("Failed to save to file: " + e.getMessage());
+    }
+}
+
+@FXML
+private void handleClearPasswordHistory() {
+    recentPasswords.clear();
+    showInfo("Password history cleared!");
+}
+```
+
+## Step 6: Add missing imports to MainController.java
+
+```java
+import io.erikka.vesta.model.PasswordEntry;
+import java.nio.file.Files;
+import java.nio.file.StandardOpenOption;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.Locale;
+```
+
+## Step 7: Add to CSS
+
+```css
+/* Password strength label */
+.strength-label {
+    -fx-font-size: 13px;
+    -fx-font-weight: bold;
+}
+```
+
+## Features:
+
+✅ **5 Password Types:** Custom, Base64, Base32, Hex, UUID  
+✅ **Customizable Length:** 8-128 characters  
+✅ **Pattern Selection:** Uppercase, lowercase, numbers, symbols  
+✅ **Custom Symbols:** User can define their own symbol set  
+✅ **Strength Indicator:** Real-time password strength analysis  
+✅ **File Management:** Auto-creates credential file with timestamped entries  
+✅ **Recent History:** Session-based table of generated passwords  
+✅ **Quick Actions:** Generate & Save in one click  
+✅ **Clipboard Support:** One-click copy to clipboard  
+
+## Sample Credential File Output:
+
+```txt
+# 23 February, 2026 - 1:28PM
+database.password=X7k#mP9$qR2@nL5
+
+# 23 February, 2026 - 1:30PM
+api.secret.key=8f3a2c1b9e4d7a6f5c2b8e1d4a7c9f2b
+
+# 23 February, 2026 - 1:35PM
+jwt.token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9
+```
+
+Perfect for managing all your generated credentials in one timestamped file! 🔐
